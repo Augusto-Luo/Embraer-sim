@@ -1,0 +1,156 @@
+{
+  "source_bytes": 14707832,
+  "output_bytes": 7302592,
+  "source_triangles": 107906,
+  "output_triangles": 65703,
+  "retained_source_vertices": 196775,
+  "output_vertices": 196775,
+  "meshes": 20,
+  "materials": 13,
+  "textures": [
+    {
+      "source_texture": 0,
+      "source_size": [
+        128,
+        128
+      ],
+      "size": [
+        128,
+        128
+      ],
+      "bytes": 2558
+    },
+    {
+      "source_texture": 2,
+      "source_size": [
+        1024,
+        1024
+      ],
+      "size": [
+        512,
+        512
+      ],
+      "bytes": 55498
+    },
+    {
+      "source_texture": 3,
+      "source_size": [
+        256,
+        256
+      ],
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 947
+    },
+    {
+      "source_texture": 5,
+      "source_size": [
+        512,
+        512
+      ],
+      "size": [
+        512,
+        512
+      ],
+      "bytes": 15790
+    },
+    {
+      "source_texture": 6,
+      "source_size": [
+        1024,
+        1024
+      ],
+      "size": [
+        512,
+        512
+      ],
+      "bytes": 30889
+    },
+    {
+      "source_texture": 7,
+      "source_size": [
+        1024,
+        1024
+      ],
+      "size": [
+        512,
+        512
+      ],
+      "bytes": 4574
+    },
+    {
+      "source_texture": 9,
+      "source_size": [
+        512,
+        512
+      ],
+      "size": [
+        512,
+        512
+      ],
+      "bytes": 10828
+    },
+    {
+      "source_texture": 12,
+      "source_size": [
+        1024,
+        1024
+      ],
+      "size": [
+        512,
+        512
+      ],
+      "bytes": 47311
+    },
+    {
+      "source_texture": 16,
+      "source_size": [
+        1024,
+        1024
+      ],
+      "size": [
+        512,
+        512
+      ],
+      "bytes": 25528
+    },
+    {
+      "source_texture": 17,
+      "source_size": [
+        128,
+        128
+      ],
+      "size": [
+        128,
+        128
+      ],
+      "bytes": 2576
+    }
+  ],
+  "bounds_min": [
+    -17.427799224853516,
+    -3.700866937637329,
+    -16.6773738861084
+  ],
+  "bounds_max": [
+    17.43939971923828,
+    7.887373924255371,
+    16.67432403564453
+  ],
+  "dimensions": [
+    34.8671989440918,
+    11.588240623474121,
+    33.35169982910156
+  ],
+  "nose_axis": "+Z",
+  "up_axis": "+Y",
+  "units": "metres",
+  "source_attribution": {
+    "author": "KOG_THORNS (https://sketchfab.com/ioai25312)",
+    "license": "CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)",
+    "source": "https://sketchfab.com/3d-models/embraer-kc-390-millennium-ed745ffba2fe45b796cbc833116e3adc",
+    "title": "Embraer KC-390 \"Millennium\""
+  }
+}
