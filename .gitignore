@@ -1,0 +1,13 @@
+.godot/
+.DS_Store
+builds/
+tmp/
+review/
+logs/
+tools/
+wdas_cloud/
+*.tmp
+*.log
+*.bak
+*.backup
+*.old
