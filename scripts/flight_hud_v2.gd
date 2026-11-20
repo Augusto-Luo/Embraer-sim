@@ -14,6 +14,7 @@ const PORTRAIT_TEXTURE = preload("res://assets/portraits/range_ctrl_hologram.png
 var state = {}
 var combat = {}
 var combat_enabled = true
+var mission_title = ""
 var map_preview = false
 var ground_attack = false
 var pursuit_mode = false
@@ -430,7 +431,7 @@ func _draw() -> void:
         text(Vector2(margin, 52), "KILLS %d" % int(combat.get("kills", 0)), 12, MUTED)
         text(Vector2(margin, 72), "TGT: " + str(combat.get("target_id", "---")), 12, INK)
     else:
-        text(Vector2(margin, 52), "ISLAND RECON / MAP PREVIEW" if map_preview else "AIRFIELD / RWY 36", 12, INK)
+        text(Vector2(margin, 52), mission_title if not mission_title.is_empty() else ("ISLAND RECON / MAP PREVIEW" if map_preview else "AIRFIELD / RWY 36"), 12, INK)
     text(Vector2(margin, 92), "INVINCIBLE TRAINING / " + ("EMB-314" if combat_enabled or map_preview else "KC-390"), 10, MUTED)
 
     if ground_attack:

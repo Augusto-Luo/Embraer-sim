@@ -89,7 +89,12 @@ func draw_navigation() -> void:
 	text(Vector2(18, 402), "ATT / FD", 16, MUTED)
 	var transport = state.get("aircraftType", "") == "KC-390"
 	text(Vector2(18, 478), "KC-390 / FLIGHT DIRECTOR" if transport else "EMB-314  /  FLIGHT DIRECTOR", 16, MUTED)
-	text(Vector2(338, 478), "MANUAL" if state.get("groundAttack", false) else ("RWY 36" if transport else "TGT " + str(combat.get("target_id", "---"))), 18, INK)
+	if state.has("echo_mission"):
+		var mission = state.echo_mission
+		var fix = str(mission.get("nav_label", "ECO-13")) if mission.get("navigation_active", true) else "MANUAL"
+		text(Vector2(338, 478), fix, 16, AMBER if mission.get("signal_lost", false) else INK)
+	else:
+		text(Vector2(338, 478), "MANUAL" if state.get("groundAttack", false) else ("RWY 36" if transport else "TGT " + str(combat.get("target_id", "---"))), 18, INK)
 	if state.get("stall", false):
 		text(Vector2(168, 410), "STALL", 26, AMBER)
 	elif state.get("lowAltitude", false):
@@ -195,6 +200,9 @@ func draw_nd() -> void:
 
 
 func draw_fms() -> void:
+	if state.has("echo_mission"):
+		draw_echo_mission()
+		return
 	if state.has("training"):
 		draw_flight_lesson()
 		return
@@ -222,6 +230,48 @@ func draw_fms() -> void:
 		status = "PULL UP"
 	text(Vector2(24, 458), status, 26, AMBER if status != "GROUND" and status != "CLIMB" else INK)
 	text(Vector2(24, 486), "A-29  /  BASIC FLIGHT", 16, MUTED)
+
+
+func draw_echo_mission() -> void:
+	frame("ECO / NIGHT FLIGHT", "03")
+	var mission: Dictionary = state.echo_mission
+	var stage = str(mission.get("stage", "night_flight"))
+	var phases = {
+		"night_flight": "NIGHT CORRIDOR", "signal": "SIGNAL ACQUIRED",
+		"contact": "CONTACT ID", "escort": "FOLLOW LIGHTS",
+		"lost_contact": "CONTACT LOST", "monster_reveal": "LINK LOST",
+		"return_route": "EXIT CORRIDOR", "free_flight": "FREE FLIGHT",
+		"complete": "FLIGHT COMPLETE", "failed": "ROUTE LOST",
+	}
+	var caution = stage in ["lost_contact", "monster_reveal", "failed"]
+	text(Vector2(24, 78), "PHASE", 18, MUTED)
+	text(Vector2(24, 112), phases.get(stage, stage.to_upper()), 28, AMBER if caution else CYAN)
+	var navigation_active = bool(mission.get("navigation_active", true))
+	text(Vector2(24, 152), "NEXT FIX" if navigation_active else "FLIGHT MODE", 18, MUTED)
+	text(Vector2(24, 184), str(mission.get("nav_label", "ECO-13")) if navigation_active else "MANUAL", 28, BRIGHT)
+	text(Vector2(24, 222), "RANGE %.1f KM" % (float(mission.get("distance", 0.0)) / 1000.0) if navigation_active else "NO ACTIVE ROUTE", 24, CYAN)
+	draw_line(Vector2(24, 240), Vector2(488, 240), MUTED, 1.0)
+	text(Vector2(24, 282), "IAS %d" % int(state.get("speedKmh", 0.0)), 26, BRIGHT)
+	text(Vector2(270, 282), "ALT %d" % int(state.get("position", [0, 0, 0])[1]), 26, BRIGHT)
+	text(Vector2(24, 326), "HDG %03d°" % (int(round(state.get("heading", 0.0))) % 360), 24, INK)
+	text(Vector2(270, 326), "VS %+.1f" % state.get("verticalSpeed", 0.0), 24, INK)
+	var gear = str(state.get("gearState", "UP"))
+	text(Vector2(24, 372), "GEAR " + gear, 22 if gear in ["UP", "DOWN"] else 17, BRIGHT)
+	text(Vector2(270, 372), "BRAKE " + ("ON" if state.get("airbrake", false) else "OFF"), 22, AMBER if state.get("airbrake", false) else INK)
+	if stage == "free_flight":
+		text(Vector2(24, 418), "EXPLORE AT YOUR DISCRETION", 22, CYAN)
+	elif stage == "contact":
+		text(Vector2(24, 418), "IDENT %.1f / %.0f S" % [float(mission.get("follow_time", 0.0)), float(mission.get("follow_required", 6.0))], 22, CYAN)
+		bar(Rect2(Vector2(270, 402), Vector2(218, 12)), float(mission.get("progress", 0.0)), CYAN)
+	elif stage == "return_route":
+		text(Vector2(24, 418), "BEACON %d / %d" % [int(mission.get("waypoint_index", 1)), int(mission.get("waypoint_count", 2))], 22, CYAN)
+	else:
+		text(Vector2(24, 418), "SIGNAL LOST" if mission.get("signal_lost", false) else "NAV FIX VALID", 22, AMBER if caution else INK)
+	var warning = str(mission.get("warning", ""))
+	if state.get("stall", false):
+		warning = "STALL / NOSE DOWN"
+	text(Vector2(24, 456), warning if not warning.is_empty() else "KC-390 / MANUAL FLIGHT", 22, AMBER if not warning.is_empty() else INK)
+	text(Vector2(24, 486), "OPERAÇÃO ECO / CENÁRIO FICCIONAL", 16, MUTED)
 
 
 func draw_flight_lesson() -> void:

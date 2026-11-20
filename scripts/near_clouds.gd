@@ -5,7 +5,15 @@ const CloudTexture = preload("res://assets/ground/near-cloud-512.png")
 
 var aircraft: Node3D
 var high_altitude = false
+# Set before adding this node to the scene tree. Day missions keep white clouds.
+var night_mode = false
+var night_tint = Color(0.085, 0.115, 0.17)
 var clouds = []
+var applied_clearance = -1.0
+var applied_moonlight = -1.0
+var applied_lightning = -1.0
+var applied_lightning_direction = Vector3.ZERO
+const DEFAULT_LIGHTNING_DIRECTION = Vector3(-0.55, 0.35, 0.76)
 var recycle_index = 0
 var wind = Vector3(1.2, 0.0, -0.5)
 
@@ -47,8 +55,13 @@ func _ready() -> void:
 		var material = ShaderMaterial.new()
 		material.shader = NearCloudShader
 		material.set_shader_parameter("cloud_texture", CloudTexture)
-		material.set_shader_parameter("opacity", spec[2])
+		material.set_shader_parameter("opacity", spec[2] * (0.7 if night_mode else 1.0))
 		material.set_shader_parameter("uv_rotation", index * 0.71)
+		if night_mode:
+			material.set_shader_parameter("cloud_tint", night_tint)
+			material.set_shader_parameter("night_factor", 1.0)
+			material.set_shader_parameter("lightning_direction", DEFAULT_LIGHTNING_DIRECTION)
+		cloud.set_meta("base_opacity", spec[2] * (0.7 if night_mode else 1.0))
 		cloud.material_override = material
 		add_child(cloud)
 		clouds.append(cloud)
@@ -63,6 +76,31 @@ func _process(dt: float) -> void:
 	if not visible:
 		return
 	var animate = not bool(controller.get("paused")) and not bool(controller.get("observation_frozen")) and not bool(controller.get("settings_open")) and not bool(controller.get("frozen"))
+	if night_mode:
+		# Use the director/controller's frozen envelope; no separate clock can
+		# continue flashing while the mission is paused or settings are open.
+		var flash_value = controller.get("echo_lightning")
+		var lightning = clamp(float(flash_value), 0.0, 1.0) if flash_value != null else 0.0
+		var direction_value = controller.get("echo_lightning_direction")
+		var direction = direction_value if direction_value is Vector3 else DEFAULT_LIGHTNING_DIRECTION
+		if direction.length_squared() < 0.01:
+			direction = DEFAULT_LIGHTNING_DIRECTION
+		if abs(lightning - applied_lightning) >= 0.001 or direction != applied_lightning_direction:
+			for cloud in clouds:
+				cloud.material_override.set_shader_parameter("lightning_strength", lightning)
+				cloud.material_override.set_shader_parameter("lightning_direction", direction)
+			applied_lightning = lightning
+			applied_lightning_direction = direction
+		var moonlight = float(controller.get("echo_moonlight"))
+		if abs(moonlight - applied_moonlight) >= 0.01:
+			for cloud in clouds:
+				cloud.material_override.set_shader_parameter("cloud_tint", night_tint * lerp(1.0, 1.6, moonlight))
+			applied_moonlight = moonlight
+		var clearance = float(controller.get("echo_clearance"))
+		if abs(clearance - applied_clearance) >= 0.01 or clearance == 0.0 and applied_clearance != 0.0:
+			for cloud in clouds:
+				cloud.material_override.set_shader_parameter("opacity", float(cloud.get_meta("base_opacity")) * (1.0 - clearance))
+			applied_clearance = clearance
 	var inverse = aircraft.global_transform.affine_inverse()
 	for cloud in clouds:
 		if animate:

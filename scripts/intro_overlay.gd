@@ -53,13 +53,15 @@ func make_label(value: String, font_size: int, color: Color, instrument: bool = 
 
 
 func set_mission(level_id: int) -> void:
-	aircraft_label.text = "KC-390 / MILLENNIUM" if level_id == 1 else "EMB-314 / SUPER TUCANO"
+	intro_label.text = "LIVERY INSPECTION"
+	aircraft_label.text = "KC-390 / MILLENNIUM" if level_id in [1, 5] else "EMB-314 / SUPER TUCANO"
 	if level_id == 1:
 		mission_label.text = "01  /  AIRFIELD CIRCUIT"
 	elif level_id == 2:
 		mission_label.text = "02  /  HIGH-ALTITUDE PURSUIT"
 	elif level_id == 5:
-		mission_label.text = "05  /  INTERCEPT"
+		mission_label.text = "05  /  OPERAÇÃO ECO"
+		intro_label.text = "HALLOWEEN / CENÁRIO FICCIONAL"
 	else:
 		mission_label.text = "03  /  COASTAL FREE COMBAT"
 

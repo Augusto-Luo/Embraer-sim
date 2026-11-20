@@ -8,6 +8,20 @@ uniform float cloud_time = 0.0;
 uniform float cloud_base = -1500.0;
 uniform vec3 cloud_focus = vec3(0.0);
 uniform float clear_radius = 0.0;
+// Zero preserves the daytime palette used by the other missions.
+uniform float night_factor : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 moon_direction = vec3(0.34, 0.43, 0.84);
+// A shared, authored envelope drives sky, local cloud cards and scene lighting.
+// Its angular falloff keeps the opposite sky dark during the reveal.
+uniform float lightning_strength : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 lightning_direction = vec3(-0.55, 0.35, 0.76);
+
+float lightning_lobe(vec3 dir) {
+	float alignment = dot(dir, normalize(lightning_direction));
+	float bank = smoothstep(0.48, 0.96, alignment);
+	float core = smoothstep(0.90, 0.999, alignment);
+	return bank * 0.30 + core * 0.70;
+}
 
 vec3 sun_direction() {
 	if (LIGHT0_ENABLED) {
@@ -23,7 +37,26 @@ vec3 background(vec3 dir) {
 	vec3 color = mix(horizon, zenith, pow(up, 0.42));
 	float sun_dot = max(dot(dir, sun_direction()), 0.0);
 	float halo = pow(sun_dot, 48.0) * 0.28 + pow(sun_dot, 650.0) * 0.85;
-	return color + vec3(1.0, 0.88, 0.66) * halo;
+	vec3 day = color + vec3(1.0, 0.88, 0.66) * halo;
+	float night = clamp(night_factor, 0.0, 1.0);
+	if (night <= 0.0) {
+		return day;
+	}
+	vec3 night_sky = mix(vec3(0.014, 0.023, 0.038), vec3(0.002, 0.004, 0.011), pow(up, 0.48));
+	vec3 moon_axis = normalize(moon_direction);
+	float moon_dot = dot(dir, moon_axis);
+	float moon_disc = smoothstep(0.99984, 0.99992, moon_dot);
+	float moon_halo = pow(max(moon_dot, 0.0), 240.0) * 0.035;
+	// A few stable stars, generated without textures or another rendering pass.
+	vec2 star_uv = vec2(atan(dir.x, dir.z), asin(clamp(dir.y, -1.0, 1.0))) * vec2(54.0, 54.0);
+	vec2 star_cell = floor(star_uv);
+	float star_seed = fract(sin(dot(star_cell, vec2(127.1, 311.7))) * 43758.5453);
+	float star_shape = 1.0 - smoothstep(0.015, 0.15, length(fract(star_uv) - vec2(0.5)));
+	float stars = step(0.9977, star_seed) * star_shape * smoothstep(0.10, 0.38, dir.y);
+	night_sky += vec3(0.54, 0.64, 0.83) * (moon_disc * 0.82 + moon_halo + stars * 0.48);
+	float flash = clamp(lightning_strength, 0.0, 1.0) * lightning_lobe(dir);
+	night_sky += vec3(0.20, 0.29, 0.43) * flash;
+	return mix(day, night_sky, night);
 }
 
 float hash31(vec3 p) {
@@ -46,6 +79,11 @@ float fbm(vec3 p) {
 	float value = 0.0;
 	float amplitude = 0.52;
 	for (int octave = 0; octave < 4; octave++) {
+		if (night_factor > 0.0 && octave == 3) {
+			// Keep the missing octave's mean density while removing its fine rings.
+			value += amplitude * 0.5;
+			break;
+		}
 		value += noise3(p) * amplitude;
 		p = p * 2.03 + vec3(13.7, 7.1, 5.3);
 		amplitude *= 0.5;
@@ -69,12 +107,13 @@ float cloud_density(vec3 p) {
 	q.y += (warp.x - warp.y) * 0.45;
 	float large = fbm(q);
 	float erosion = noise3(q * 3.8 + vec3(3.4, 1.2, 8.9));
-	float shape = large - erosion * 0.055;
+	float night = clamp(night_factor, 0.0, 1.0);
+	float shape = large - erosion * mix(0.055, 0.025, night);
 	float threshold = 0.59 - clamp(coverage, 0.05, 0.95) * 0.14;
 	threshold += smoothstep(0.35, 1.0, height) * 0.12;
-	float field = smoothstep(threshold, threshold + 0.075, shape);
+	float field = smoothstep(threshold, threshold + mix(0.075, 0.145, night), shape);
 	float opening = clear_radius > 0.0 ? smoothstep(clear_radius * 0.45, clear_radius, distance(p, cloud_focus)) : 1.0;
-	return field * profile * 2.0 * opening;
+	return field * profile * mix(2.0, 1.35, night) * opening;
 }
 
 float cloud_shadow_density(vec3 p) {
@@ -113,8 +152,14 @@ vec4 render_clouds(vec3 dir) {
 		float step_size = (t1 - t0) / float(steps);
 		float jitter = 0.5 + (noise3(dir * 180.0) - 0.5) * 0.50;
 		t0 += step_size * jitter;
+		float night = clamp(night_factor, 0.0, 1.0);
 		vec3 sun = sun_direction();
+		if (night > 0.0) {
+			sun = normalize(mix(sun, normalize(moon_direction), night));
+		}
 		float view_sun = max(dot(dir, sun), 0.0);
+		// Evaluate once per ray, with no additional noise or march samples.
+		float flash = night * clamp(lightning_strength, 0.0, 1.0) * lightning_lobe(dir);
 		for (int index = 0; index < 192; index++) {
 			if (index >= steps || transmittance < 0.025) {
 				break;
@@ -131,7 +176,16 @@ vec4 render_clouds(vec3 dir) {
 				vec3 base = mix(vec3(0.055, 0.070, 0.095), vec3(0.42, 0.47, 0.54), shade);
 				base *= mix(0.65, 1.05, height);
 				vec3 color = mix(base, vec3(1.0, 0.98, 0.93), rim);
-				float alpha = 1.0 - exp(-density * step_size * 0.055);
+				if (night > 0.0) {
+					vec3 night_base = mix(vec3(0.003, 0.005, 0.010), vec3(0.017, 0.027, 0.045), shade);
+					night_base *= mix(0.72, 1.10, height);
+					vec3 night_color = mix(night_base, vec3(0.08, 0.115, 0.18), rim);
+					// Lightning reveals the existing bank volume, rather than adding
+					// an opaque screen flash. Dense interiors retain their shading.
+					night_color += vec3(0.32, 0.44, 0.62) * flash * mix(0.30, 1.0, shade);
+					color = mix(color, night_color, night);
+				}
+				float alpha = 1.0 - exp(-density * step_size * mix(0.055, 0.022, night));
 				accum += color * alpha * transmittance;
 				transmittance *= 1.0 - alpha;
 			}

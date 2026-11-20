@@ -99,7 +99,7 @@ func build_interface() -> void:
 	mission_list.add_child(make_level_button(2, "PURSUIT", "KC-390", true))
 	mission_list.add_child(make_level_button(3, "FREE COMBAT", "COASTAL RANGE", true))
 	mission_list.add_child(make_level_button(4, "GROUND ATTACK", "CITY + OFFSHORE / MANUAL AIM", true))
-	mission_list.add_child(make_level_button(5, "INTERCEPT", "FLASH EVENT / FLÁVIO", true))
+	mission_list.add_child(make_level_button(5, "OPERAÇÃO ECO", "HALLOWEEN / KC-390", true))
 
 	var details = PanelContainer.new()
 	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -202,9 +202,9 @@ func select_level(level: int, animate: bool = true) -> void:
 		mission_body.text = "DESTROY BOTH SITES.\nGUNS + GUIDED ROCKETS."
 		mission_route.text = "8 TARGETS / MANUAL AIM / NO TIME LIMIT"
 	else:
-		mission_title.text = "INTERCEPT"
-		mission_body.text = "CENÁRIO FICCIONAL.\nPERSIGA. MANTENHA. INTERCEPTE."
-		mission_route.text = "ALVO: FLÁVIO / FRONTEIRA AÉREA"
+		mission_title.text = "OPERAÇÃO ECO"
+		mission_body.text = "CENÁRIO FICCIONAL.\nUma transmissão desconhecida interrompe o voo noturno. Investigue o sinal a bordo do KC-390, mantenha o controle e explore livremente o céu após o encontro."
+		mission_route.text = "HALLOWEEN / VOO NOTURNO / 3–4 MIN"
 	start_button.text = "LAUNCH %02d >" % level
 	if changed and animate:
 		animate_selection()

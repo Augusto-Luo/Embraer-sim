@@ -5,12 +5,14 @@ const GroundProjectile = preload("res://scripts/ground_strike_projectile.gd")
 const CombatEffect = preload("res://scripts/combat_effect.gd")
 const GunFireAudio = preload("res://scripts/gun_fire_audio.gd")
 const TARGET_HP = 120.0
-const TARGET_COUNT = 8
-const TOTAL_HP = TARGET_HP * TARGET_COUNT
+const SHIP_HP = 240.0
+const TARGET_COUNT = 10
+const SHIP_COUNT = 2
+const TOTAL_HP = TARGET_HP * (TARGET_COUNT - SHIP_COUNT) + SHIP_HP * SHIP_COUNT
 const GUN_DAMAGE = 10.0
 const ROCKET_DAMAGE = 100.0
 const GUN_AMMO = 600
-const ROCKET_AMMO = 6
+const ROCKET_AMMO = 7
 const LOCK_RANGE = 2200.0
 const LOCK_ANGLE = 16.0
 const LOCK_SECONDS = 0.8
@@ -74,7 +76,8 @@ func restart() -> void:
 	projectiles.clear()
 	effects.clear()
 	map_scale = float(island.MAP_SCALE) if island != null else 1.0
-	platform_bounds = AABB(scale_site_position(Vector3(815, 0, 50)), Vector3(120.0 * map_scale, 1.6, 120.0 * map_scale))
+	# The dock sits behind the two moored ships, under only the fuel targets.
+	platform_bounds = AABB(scale_site_position(Vector3(815, 0, 120)), Vector3(120.0 * map_scale, 1.6, 60.0 * map_scale))
 	sites = [
 		{"id": "avenue", "name": "AVENUE", "center": scale_site_position(Vector3(78, 8.45, 50)), "radius": 140.0 * map_scale},
 		{"id": "offshore", "name": "OFFSHORE", "center": scale_site_position(Vector3(875, 1.75, 110)), "radius": 90.0 * map_scale},
@@ -102,22 +105,69 @@ func restart() -> void:
 	warning_text = ""
 	warning_timer = 0.0
 	build_sites()
-	var positions = [Vector3(22, 8.45, -25), Vector3(59, 8.45, 25), Vector3(96, 8.45, 75), Vector3(133, 8.45, 125),
-		Vector3(843, 1.65, 78), Vector3(907, 1.65, 78), Vector3(843, 1.65, 142), Vector3(907, 1.65, 142)]
+	var positions = [Vector3(22, 8.02, -25), Vector3(59, 8.02, 25), Vector3(96, 8.02, 75), Vector3(133, 8.02, 125),
+		Vector3(843, 0.0, 78), Vector3(907, 0.0, 78), Vector3(843, 1.62, 142), Vector3(907, 1.62, 142),
+		Vector3(843, 1.62, 166), Vector3(907, 1.62, 166)]
+	var kinds = ["tank", "tank", "tank", "tank", "ship", "ship", "fuel", "fuel", "fuel", "fuel"]
+	var site_indices = {"avenue": 0, "offshore": 0}
 	for index in range(TARGET_COUNT):
 		var target = GroundTarget.new()
 		target.name = "GroundTarget%02d" % (index + 1)
-		target.callsign = ("AV-" if index < 4 else "SEA-") + str(index % 4 + 1)
 		target.site_id = "avenue" if index < 4 else "offshore"
+		site_indices[target.site_id] += 1
+		target.callsign = ("AV-" if index < 4 else "SEA-") + str(site_indices[target.site_id])
 		target.variant = index % 4
+		target.kind = kinds[index]
 		target.position = scale_site_position(positions[index])
 		target.damaged.connect(record_damage)
 		target.eliminated.connect(register_kill)
 		add_child(target)
 		targets.append(target)
+	configure_ship_cruise()
 	enemies = targets
 	selected_enemy = targets[0]
 	assert(TOTAL_HP > ROCKET_AMMO * ROCKET_DAMAGE)
+
+
+func configure_ship_cruise() -> void:
+	var path: Array[Vector3] = []
+	if island != null and not island.coast_polygon.is_empty():
+		var center = island.city_footprint.get_center()
+		# Follow the irregular coastline at a safe offshore distance.
+		for index in range(0, island.coast_polygon.size(), 4):
+			var point = island.coast_polygon[index]
+			var radial = (point - center).normalized() * 260.0 * map_scale
+			var position = point + radial
+			path.append(Vector3(position.x, 0.0, position.y))
+	else:
+		var center = scale_site_position(Vector3(875, 0, 110))
+		for index in range(32):
+			var angle = TAU * float(index) / 32.0
+			path.append(center + Vector3(cos(angle), 0.0, sin(angle)) * 330.0 * map_scale)
+	var ship_index = 0
+	for target in targets:
+		if target.kind != "ship":
+			continue
+		var start_distance = nearest_cruise_distance(path, target.position) + float(ship_index) * 240.0 * map_scale
+		target.configure_cruise(path, start_distance)
+		ship_index += 1
+
+
+func nearest_cruise_distance(path: Array[Vector3], point: Vector3) -> float:
+	var best_distance = INF
+	var result = 0.0
+	var traveled = 0.0
+	for index in range(path.size()):
+		var start = path[index]
+		var finish = path[(index + 1) % path.size()]
+		var segment = finish - start
+		var fraction = clampf((point - start).dot(segment) / maxf(segment.length_squared(), 0.001), 0.0, 1.0)
+		var distance = point.distance_to(start + segment * fraction)
+		if distance < best_distance:
+			best_distance = distance
+			result = traveled + segment.length() * fraction
+		traveled += segment.length()
+	return result
 
 
 func scale_site_position(source_position: Vector3) -> Vector3:
@@ -194,6 +244,9 @@ func _physics_process(dt: float) -> void:
 	warning_timer = maxf(0, warning_timer - dt)
 	hit_timer = maxf(0, hit_timer - dt)
 	kill_timer = maxf(0, kill_timer - dt)
+	for target in targets:
+		if target.kind == "ship" and not target.destroyed:
+			target.step_cruise(dt)
 	for projectile in projectiles.duplicate():
 		if not is_instance_valid(projectile) or not projectile.active:
 			continue
@@ -350,10 +403,13 @@ func trace_segment(start: Vector3, finish: Vector3, weapon: String = "gun") -> D
 	for target in targets:
 		if target.destroyed:
 			continue
-		var hit_fraction = segment_box_fraction(start, finish, target.get_hit_bounds(weapon))
-		if hit_fraction < fraction:
-			fraction = hit_fraction
-			best = {"hit": true, "target": target, "enemy": target, "fraction": fraction, "position": start.lerp(finish, fraction)}
+		var local_start = target.to_local(start)
+		var local_finish = target.to_local(finish)
+		for hit_box in target.get_local_hit_volumes(weapon):
+			var hit_fraction = segment_box_fraction(local_start, local_finish, hit_box)
+			if hit_fraction < fraction:
+				fraction = hit_fraction
+				best = {"hit": true, "target": target, "enemy": target, "fraction": fraction, "position": start.lerp(finish, fraction)}
 	return best
 
 
@@ -496,15 +552,19 @@ func snapshot() -> Dictionary:
 	var site_states = []
 	for site in sites:
 		var remaining = 0.0
+		var site_max_hp = 0.0
 		var destroyed = 0
+		var site_total = 0
 		for target in targets:
 			if target.site_id == site.id:
+				site_total += 1
 				remaining += target.hp
+				site_max_hp += target.max_hp
 				destroyed += int(target.destroyed)
 		var state = site.duplicate()
-		state.total = 4
+		state.total = site_total
 		state.destroyed = destroyed
-		state.destruction = 1.0 - remaining / (TARGET_HP * 4)
+		state.destruction = 1.0 - remaining / maxf(site_max_hp, 1.0)
 		site_states.append(state)
 	var reticle_world = player.position + player.forward * 1000
 	return {"ground_attack": true, "contacts": contacts, "sites": site_states, "completed": completed,
@@ -513,7 +573,7 @@ func snapshot() -> Dictionary:
 		"gun_damage_total": gun_damage_total, "rocket_damage_total": rocket_damage_total,
 		"target_id": selected_enemy.callsign if is_instance_valid(selected_enemy) else "---",
 		"target_hp": selected_enemy.hp if is_instance_valid(selected_enemy) else 0,
-		"target_max_hp": TARGET_HP, "lock_progress": lock_progress, "locked": locked,
+		"target_max_hp": selected_enemy.max_hp if is_instance_valid(selected_enemy) else 0, "lock_progress": lock_progress, "locked": locked,
 		"gun_assist": false, "gun_assist_state": "idle", "gun_assist_remaining": 0.0, "reticle_snapped": false,
 		"gun_reticle_screen": camera.unproject_position(reticle_world) if camera != null else viewport_size * 0.5,
 		"gun_reticle_visible": not camera.is_position_behind(reticle_world) if camera != null else true,

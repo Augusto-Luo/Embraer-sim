@@ -3,6 +3,9 @@ extends Node3D
 const FlightModel = preload("res://scripts/flight_model.gd")
 const FlightHud = preload("res://scripts/flight_hud_v2.gd")
 const FlightSettings = preload("res://scripts/flight_settings.gd")
+const EchoFlightSettings = preload("res://scripts/echo_flight_settings.gd")
+const EchoCockpitLighting = preload("res://scripts/echo_cockpit_lighting.gd")
+const EchoHudCombiner = preload("res://scripts/echo_hud_combiner.gd")
 const SettingsPanel = preload("res://scripts/settings_panel.gd")
 const AircraftScene = preload("res://assets/emb314-flight.glb")
 const TransportScene = preload("res://assets/kc390-training-ready.glb")
@@ -39,6 +42,18 @@ const INTRO_SHOTS_KC390 = [
 ]
 
 var level_id = 3
+var transport_aircraft = false
+var echo_clearance = 0.0
+var echo_lightning = 0.0
+var echo_moonlight = 0.0
+var echo_moon_fill: DirectionalLight3D
+var echo_cabin_lighting
+var echo_hud_combiner
+var echo_lightning_direction = Vector3(-0.55, 0.35, 0.76).normalized()
+var echo_flash_light: DirectionalLight3D
+var echo_front_light: DirectionalLight3D
+var echo_tele_fov = 24.0
+
 var pursuit
 var interception
 var interception_hud
@@ -124,7 +139,8 @@ func _ready() -> void:
 	level_id = int(get_tree().root.get_meta("selected_level", 3))
 	if level_id not in [1, 2, 3, 4, 5]:
 		level_id = 3
-	settings = FlightSettings.new("res://settings-level%d.cfg" % level_id, TransportProfile.SETTINGS if level_id == 1 else {})
+	transport_aircraft = level_id in [1, 5]
+	settings = EchoFlightSettings.new() if level_id == 5 else FlightSettings.new("res://settings-level%d.cfg" % level_id, TransportProfile.SETTINGS if level_id == 1 else {})
 	setup_input()
 	if level_id == 1:
 		airport = TrainingAirport.new()
@@ -132,19 +148,24 @@ func _ready() -> void:
 		strike_island = StrikeIsland.new()
 	model = FlightModel.new({
 		"position": strike_island.spawn_position() if level_id == 4 else (airport.spawn_position() if level_id == 1 else (Vector3(-3500, 5200, -2000) if level_id in [2, 5] else Vector3(0, 1200, 0))),
-		"quaternion": strike_island.spawn_orientation() if level_id == 4 else Quaternion(),
-		"speed": 0.0 if level_id == 1 else (145.0 if level_id in [2, 5] else 115.0),
-		"throttle": 0.0 if level_id == 1 else 0.68,
+		"quaternion": strike_island.spawn_orientation() if level_id == 4 else (Quaternion(Vector3.RIGHT, -TransportProfile.angle_of_attack(100.0)) if level_id == 5 else Quaternion()),
+		"speed": 0.0 if level_id == 1 else (100.0 if level_id == 5 else (145.0 if level_id == 2 else 115.0)),
+		"throttle": 0.0 if level_id == 1 else (0.88 if level_id == 5 else 0.68),
 		"ground_operations": level_id == 1,
-		"transport_profile": level_id == 1,
+		"transport_profile": transport_aircraft,
 		"on_ground": level_id == 1,
-		"gear_clearance": 1.2 if level_id == 1 else 2.5,
+		"gear_clearance": 1.2 if transport_aircraft else 2.5,
 		"ground_height": strike_island.ground_height if level_id == 4 else (airport.ground_height if level_id == 1 else func(_x, _z): return 0.0),
 		"obstacle_height": strike_island.obstacle_height if level_id == 4 else func(_x, _z): return -INF,
 		"boundary_radius": 15000.0 if level_id in [2, 5] else (9000.0 if level_id in [1, 4] else 5000.0),
 		"settings": settings.values,
 		"invincible": true,
 	})
+	if level_id == 5:
+		configure_echo_spawn()
+		if cockpit_hud != null:
+			set_cockpit_mode(true)
+			camera.fov = 62.0
 	previous_model_position = model.position
 	previous_model_orientation = model.orientation
 	previous_model_speed = model.speed
@@ -155,6 +176,8 @@ func _ready() -> void:
 	build_aircraft()
 	build_camera()
 	build_hud()
+	if level_id == 5:
+		set_cockpit_mode(true)
 	intro_active = level_id in [1, 2, 3, 5] and bool(get_tree().root.get_meta("play_intro", false))
 	if level_id == 1:
 		takeoff = TakeoffDirector.new()
@@ -171,13 +194,15 @@ func _ready() -> void:
 		ground_strike.island = strike_island
 		combat = ground_strike
 		add_child(ground_strike)
-	elif level_id in [2, 3, 5]:
+	elif level_id == 5:
+		interception = InterceptionDirector.new()
+		interception.player = model
+		interception.camera = camera
+		add_child(interception)
+	elif level_id in [2, 3]:
 		if level_id == 2:
 			combat = PursuitDirector.new()
 			pursuit = combat
-		elif level_id == 5:
-			combat = InterceptionDirector.new()
-			interception = combat
 		else:
 			combat = CombatDirector.new()
 		combat.player = model
@@ -216,7 +241,7 @@ func bind_key(action: String, keycode: int) -> void:
 func setup_input() -> void:
 	for action in settings.key_bindings:
 		bind_key(action, int(settings.key_bindings[action]))
-	if hud != null and level_id == 1:
+	if hud != null and transport_aircraft:
 		hud.update_training_keys(settings.key_bindings)
 
 
@@ -257,15 +282,47 @@ func build_environment() -> void:
 	environment.fog_light_energy = 0.7
 	environment.fog_density = float(settings.values.fog_density)
 	environment.fog_sky_affect = 0.35
+	if level_id == 5:
+		environment.ambient_light_color = Color("#8894b4")
+		environment.ambient_light_energy = 0.12
+		environment.background_energy_multiplier = 0.52
+		environment.tonemap_exposure = 0.94
+		environment.glow_enabled = true
+		environment.glow_intensity = 0.55
+		environment.glow_strength = 0.85
+		environment.glow_bloom = 0.04
+		environment.glow_hdr_threshold = 1.3
 	world_environment = environment
 	world.environment = environment
 	add_child(world)
 
 	sun_light = DirectionalLight3D.new()
 	sun_light.rotation_degrees = Vector3(-float(settings.values.sun_elevation), -135.0, 0)
-	sun_light.light_energy = 1.2
+	sun_light.light_energy = 0.13 if level_id == 5 else 1.2
+	if level_id == 5:
+		sun_light.light_color = Color("#b4c5ed")
+		sun_light.rotation_degrees = Vector3(-27.0, -158.0, 0.0)
 	sun_light.shadow_enabled = true
 	add_child(sun_light)
+	if level_id == 5:
+		# A shadow-free moon bounce keeps the transport readable from chase view.
+		var moon_fill = DirectionalLight3D.new()
+		moon_fill.rotation_degrees = Vector3(-18.0, 28.0, 0.0)
+		moon_fill.light_color = Color("#8dabc9")
+		moon_fill.light_energy = 0.07
+		moon_fill.shadow_enabled = false
+		add_child(moon_fill)
+		echo_moon_fill = moon_fill
+		echo_flash_light = DirectionalLight3D.new()
+		echo_flash_light.light_color = Color("c6ddff")
+		echo_flash_light.light_energy = 0.0
+		echo_flash_light.shadow_enabled = false
+		add_child(echo_flash_light)
+		echo_front_light = DirectionalLight3D.new()
+		echo_front_light.light_color = Color("a8c6ef")
+		echo_front_light.light_energy = 0.0
+		echo_front_light.shadow_enabled = false
+		add_child(echo_front_light)
 
 	if level_id in [1, 3]:
 		var coastal_ground = CoastalGround.new()
@@ -281,12 +338,12 @@ func build_environment() -> void:
 
 func build_aircraft() -> void:
 	aircraft_root = Node3D.new()
-	aircraft_root.name = "KC390_Aircraft" if level_id == 1 else "EMB314_Aircraft"
+	aircraft_root.name = "KC390_Aircraft" if transport_aircraft else "EMB314_Aircraft"
 	add_child(aircraft_root)
-	var scene = TransportScene if level_id == 1 else AircraftScene
+	var scene = TransportScene if transport_aircraft else AircraftScene
 	var visual = scene.instantiate()
 	aircraft_root.add_child(visual)
-	if level_id == 1:
+	if transport_aircraft:
 		rebase_transport_hinge_meshes(visual)
 		transport_surfaces = TransportSurfaces.new()
 		transport_surfaces.setup(visual)
@@ -337,6 +394,16 @@ func build_aircraft() -> void:
 		cockpit_displays = CockpitDisplays.new()
 	aircraft_root.position = model.position
 	aircraft_root.quaternion = model.orientation
+	if level_id == 5:
+		echo_cabin_lighting = EchoCockpitLighting.new()
+		echo_cabin_lighting.name = "EchoCockpitLighting"
+		add_child(echo_cabin_lighting)
+		echo_cabin_lighting.setup(visual)
+	if level_id in [1, 5]:
+		echo_hud_combiner = EchoHudCombiner.new()
+		echo_hud_combiner.name = "EchoHudCombiner"
+		add_child(echo_hud_combiner)
+		echo_hud_combiner.setup(self, visual)
 	cockpit_displays.flight = self
 	add_child(cockpit_displays)
 	if level_id in [2, 3, 5]:
@@ -344,6 +411,7 @@ func build_aircraft() -> void:
 		near_clouds.name = "NearClouds"
 		near_clouds.aircraft = aircraft_root
 		near_clouds.high_altitude = level_id in [2, 5]
+		near_clouds.night_mode = level_id == 5
 		add_child(near_clouds)
 
 
@@ -377,7 +445,7 @@ func build_camera() -> void:
 	camera.fov = 52.0
 	add_child(camera)
 	camera.current = true
-	if level_id != 1:
+	if not transport_aircraft:
 		wingtip_trails = WingtipTrails.new()
 		wingtip_trails.aircraft = aircraft_root
 		add_child(wingtip_trails)
@@ -388,11 +456,12 @@ func build_hud() -> void:
 	var layer = CanvasLayer.new()
 	add_child(layer)
 	hud = FlightHud.new()
-	hud.pursuit_mode = level_id in [2, 5]
-	hud.combat_enabled = level_id in [2, 3, 4, 5]
+	hud.pursuit_mode = level_id == 2
+	hud.combat_enabled = level_id in [2, 3, 4]
 	hud.ground_attack = level_id == 4
+	hud.mission_title = "OPERAÇÃO ECO / NIGHT FLIGHT" if level_id == 5 else ""
 	layer.add_child(hud)
-	if level_id == 1:
+	if transport_aircraft:
 		hud.update_training_keys(settings.key_bindings)
 	hud.camera_requested.connect(toggle_camera)
 	hud.pause_requested.connect(toggle_pause)
@@ -405,15 +474,18 @@ func build_hud() -> void:
 	add_child(settings_layer)
 	settings_panel = SettingsPanel.new()
 	settings_panel.settings = settings
-	settings_panel.combat_enabled = level_id in [2, 3, 4, 5]
+	settings_panel.combat_enabled = level_id in [2, 3, 4]
 	settings_panel.ground_attack = level_id == 4
 	settings_panel.level_id = level_id
 	settings_panel.controller = self
 	settings_layer.add_child(settings_panel)
 	settings_panel.closed.connect(close_settings)
 	cockpit_hud = CockpitHud.new()
-	cockpit_hud.combat_enabled = level_id in [2, 3, 4, 5]
+	cockpit_hud.combat_enabled = level_id in [2, 3, 4]
 	cockpit_hud.ground_attack = level_id == 4
+	cockpit_hud.mission_title = "OPERAÇÃO ECO / KC-390" if level_id == 5 else ""
+	cockpit_hud.seat_locked = level_id == 5
+	cockpit_hud.physical_instruments = level_id in [1, 5]
 	layer.add_child(cockpit_hud)
 	cockpit_hud.visible = false
 	cockpit_hud.set_seat(cockpit_seat.to_upper())
@@ -507,7 +579,7 @@ func update_intro_camera(dt: float) -> void:
 	if not intro_active:
 		return
 	intro_elapsed = min(INTRO_DURATION, intro_elapsed + dt)
-	var shots = INTRO_SHOTS_KC390 if level_id == 1 else INTRO_SHOTS
+	var shots = INTRO_SHOTS_KC390 if transport_aircraft else INTRO_SHOTS
 	var current_index = shots.size() - 1
 	for index in range(shots.size()):
 		if intro_elapsed <= float(shots[index].end):
@@ -554,6 +626,15 @@ func _input(event: InputEvent) -> void:
 		return
 	if settings_open:
 		return
+	if level_id == 5 and interception != null and interception.cinematic_active():
+		if event is InputEventKey and event.pressed and not event.echo and (event.keycode in [KEY_ENTER, KEY_KP_ENTER] or event.physical_keycode in [KEY_ENTER, KEY_KP_ENTER]):
+			if not paused:
+				interception.finish_monster_reveal()
+			get_viewport().set_input_as_handled()
+			return
+		if event.is_action_pressed("observe") or event.is_action_pressed("cockpit") or event.is_action_pressed("cockpit_seat") or event.is_action_pressed("camera") or event.is_action_pressed("gear_toggle"):
+			get_viewport().set_input_as_handled()
+			return
 	if event.is_action_pressed("observe"):
 		toggle_observation()
 		get_viewport().set_input_as_handled()
@@ -576,7 +657,7 @@ func _input(event: InputEvent) -> void:
 		toggle_pause()
 	elif event.is_action_pressed("reset"):
 		reset_flight()
-	elif event.is_action_pressed("gear_toggle") and level_id == 1:
+	elif event.is_action_pressed("gear_toggle") and transport_aircraft:
 		toggle_landing_gear()
 	elif event.is_action_pressed("help") and not observing:
 		hud.toggle_help()
@@ -593,14 +674,14 @@ func handle_observation_input(event: InputEvent) -> void:
 		elif not observation_controls.is_pointer_over_ui() and event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			observation_distance = max(5.0, observation_distance * 0.90)
 		elif not observation_controls.is_pointer_over_ui() and event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			observation_distance = min(45.0, observation_distance * 1.10)
+			observation_distance = min(140.0 if transport_aircraft else 45.0, observation_distance * 1.10)
 	elif event is InputEventMouseMotion and orbiting:
 		observation_yaw -= event.relative.x * 0.005
 		observation_pitch = clamp(observation_pitch - event.relative.y * 0.005, -1.35, 1.35)
 
 
 func handle_free_look_input(event: InputEvent) -> void:
-	if cockpit_mode:
+	if cockpit_mode and not echo_free_flight():
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
 		if event.pressed:
@@ -615,7 +696,7 @@ func handle_free_look_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and free_look_active:
 		var sensitivity = FREE_LOOK_SENSITIVITY * float(settings.values.get("view_sensitivity", 1.0))
 		free_look_yaw = wrapf(free_look_yaw - event.relative.x * sensitivity, -PI, PI)
-		free_look_pitch = clamp(free_look_pitch - event.relative.y * sensitivity, -0.35, 0.90)
+		free_look_pitch = clamp(free_look_pitch - event.relative.y * sensitivity, -1.1 if cockpit_mode else -0.35, 1.1 if cockpit_mode else 0.90)
 		get_viewport().set_input_as_handled()
 
 
@@ -668,6 +749,8 @@ func close_settings() -> void:
 
 
 func toggle_camera() -> void:
+	if level_id == 5 and not observing and not echo_free_flight():
+		return
 	if cockpit_mode:
 		set_cockpit_mode(false)
 		return
@@ -703,6 +786,11 @@ func reset_flight() -> void:
 		reset_observation_view()
 		return
 	model.reset()
+	if level_id == 5:
+		configure_echo_spawn()
+		if cockpit_hud != null:
+			set_cockpit_mode(true)
+			camera.fov = 62.0
 	previous_model_position = model.position
 	previous_model_orientation = model.orientation
 	previous_model_speed = model.speed
@@ -716,6 +804,8 @@ func reset_flight() -> void:
 	cockpit_hud.set_paused(false)
 	if combat != null:
 		combat.restart()
+	if interception != null:
+		interception.restart()
 	if interception_hud != null:
 		interception_hud.start_briefing_stream()
 	if takeoff != null:
@@ -778,7 +868,7 @@ func enter_observation() -> void:
 	observation_frozen = false
 	orbiting = false
 	model.inputs = {"pitch": 0.0, "roll": 0.0, "yaw": 0.0}
-	observation_target = visual_position + (Vector3(0.0, 2.0, 0.0) if level_id == 1 else visual_orientation * Vector3(0.57, 0.10, -0.50))
+	observation_target = visual_position + (Vector3(0.0, 2.0, 0.0) if transport_aircraft else visual_orientation * Vector3(0.57, 0.10, -0.50))
 	reset_observation_view()
 	hud.visible = false
 	observation_controls.visible = true
@@ -806,7 +896,7 @@ func exit_observation() -> void:
 func reset_observation_view() -> void:
 	observation_yaw = 0.65
 	observation_pitch = 0.35
-	observation_distance = 35.0 if level_id == 1 else 16.0
+	observation_distance = 35.0 if level_id == 1 else (48.0 if level_id == 5 else 16.0)
 	orbiting = false
 
 
@@ -848,9 +938,9 @@ func throttle_input(up: float, down: float, left_trigger: float, right_trigger: 
 func toggle_landing_gear() -> void:
 	if paused or frozen or settings_open or observing or observation_frozen:
 		return
-	if model.toggle_landing_gear():
+	if model.toggle_landing_gear() and takeoff != null:
 		takeoff.queue_toast("GEAR EXTENDING" if model.gear_target_down else "GEAR RETRACTING")
-	elif model.on_ground:
+	elif model.on_ground and takeoff != null:
 		takeoff.queue_toast("GEAR / GROUND LOCK")
 
 
@@ -870,8 +960,6 @@ func mouse_over_flight_ui() -> bool:
 
 
 func read_controls() -> Dictionary:
-	if pad_edge(JOY_BUTTON_START):
-		toggle_pause()
 	if pad_edge(JOY_BUTTON_Y):
 		toggle_camera()
 	if pad_edge(JOY_BUTTON_X):
@@ -909,6 +997,8 @@ func _physics_process(dt: float) -> void:
 			if enemy_spawn_countdown <= 0.0:
 				spawn_pending_enemies()
 		var controls = read_controls()
+		if level_id == 5 and interception != null:
+			controls = interception.cinematic_controls(dt, controls)
 		if combat != null and combat.has_method("cinematic_controls"):
 			controls = combat.cinematic_controls(dt, controls)
 		if combat != null and level_id != 4:
@@ -921,6 +1011,9 @@ func _physics_process(dt: float) -> void:
 
 
 func _process(dt: float) -> void:
+	# Pause must remain reachable when physics/control sampling is held.
+	if not intro_active and not settings_open and pad_edge(JOY_BUTTON_START):
+		toggle_pause()
 	var interpolation = clamp(Engine.get_physics_interpolation_fraction(), 0.0, 1.0)
 	visual_position = previous_model_position.lerp(model.position, interpolation)
 	visual_orientation = previous_model_orientation.slerp(model.orientation, interpolation).normalized()
@@ -940,6 +1033,8 @@ func _process(dt: float) -> void:
 		update_intro_camera(dt)
 	elif observing:
 		update_observation_camera(dt)
+	elif level_id == 5 and interception != null and interception.cinematic_active():
+		update_echo_camera(dt)
 	else:
 		update_camera(dt)
 	if wingtip_trails != null:
@@ -949,9 +1044,19 @@ func _process(dt: float) -> void:
 		strike_island.set_simulation_paused(paused or frozen or settings_open or observing or observation_frozen)
 	if not hold_clouds:
 		cloud_time += dt
-	update_atmosphere()
+	update_atmosphere(dt)
+	if level_id == 5 and interception != null:
+		hud.help_label.visible = hud.help_visible and interception.stage not in ["complete", "failed"]
 	hud.update_state(model.telemetry())
 	cockpit_hud.update_state(model.telemetry())
+	if level_id == 5 and interception != null:
+		var cinematic_weight = 0.0
+		if interception.cinematic_active():
+			var reveal_t = interception.stage_elapsed
+			cinematic_weight = smoothstep(0.0, 0.85, reveal_t) * (1.0 - smoothstep(12.8, 14.0, reveal_t))
+		cockpit_hud.set_encounter_visibility(cinematic_weight)
+		cockpit_hud.seat_locked = not echo_free_flight()
+		mission_hud.root_control.modulate.a = 1.0 - cinematic_weight if not paused else 1.0
 	hud.set_free_look(free_look_active)
 	if combat != null:
 		var combat_state = combat.snapshot()
@@ -968,7 +1073,7 @@ func _process(dt: float) -> void:
 func update_control_surfaces(dt: float, inputs: Dictionary) -> void:
 	var surface_blend = 1.0 - exp(-dt * 12.0)
 	var rudder_blend = 1.0 - exp(-dt * 10.0)
-	if level_id == 1:
+	if transport_aircraft:
 		if transport_surfaces != null:
 			transport_surfaces.apply_inputs(dt, inputs)
 		if elevator_l != null:
@@ -1017,22 +1122,52 @@ func apply_performance_settings(force: bool = false) -> void:
 				fallback_sky_material.sky_curve = 0.18
 				fallback_sky_material.sun_angle_max = 5.0
 				fallback_sky_material.sun_curve = 0.08
+			if level_id == 5:
+				fallback_sky_material.sky_top_color = Color("#050a17")
+				fallback_sky_material.sky_horizon_color = Color("#202b46")
+				fallback_sky_material.ground_bottom_color = Color("#080d1b")
+				fallback_sky_material.ground_horizon_color = Color("#202b46")
+				fallback_sky_material.sun_angle_max = 0.5
 			world_environment.sky.sky_material = fallback_sky_material
 		applied_volume_clouds = use_volume_clouds
 
 
-func update_atmosphere() -> void:
+func update_atmosphere(dt: float = 0.0) -> void:
 	apply_performance_settings()
+	if level_id == 5 and interception != null and not (intro_active or paused or frozen or settings_open or observing or observation_frozen):
+		# The reveal opens into moonlit exploration, with no forced exit corridor.
+		echo_clearance = move_toward(echo_clearance, 0.0, dt * 0.15)
+		echo_moonlight = move_toward(echo_moonlight, 1.0 if echo_free_flight() else 0.0, dt * 0.34)
 	if cloud_material != null:
-		cloud_material.set_shader_parameter("coverage", max(0.80, settings.values.cloud_coverage) if level_id in [2, 5] else (min(0.4, settings.values.cloud_coverage) if level_id in [1, 4] else settings.values.cloud_coverage))
+		cloud_material.set_shader_parameter("night_factor", 1.0 if level_id == 5 else 0.0)
+		if level_id == 5:
+			cloud_material.set_shader_parameter("moon_direction", Vector3(0.20, 0.25, 0.95))
+			cloud_material.set_shader_parameter("lightning_strength", echo_lightning)
+			cloud_material.set_shader_parameter("lightning_direction", echo_lightning_direction)
+		cloud_material.set_shader_parameter("coverage", lerp(clamp(settings.values.cloud_coverage, 0.65, 0.75), 0.53, echo_moonlight) if level_id == 5 else (max(0.80, settings.values.cloud_coverage) if level_id == 2 else (min(0.4, settings.values.cloud_coverage) if level_id in [1, 4] else settings.values.cloud_coverage)))
 		cloud_material.set_shader_parameter("cloud_top", 7800.0 if level_id in [2, 5] else settings.values.cloud_top)
 		cloud_material.set_shader_parameter("cloud_base", 2400.0 if level_id in [2, 5] else (1800.0 if level_id in [1, 4] else -1500.0))
-		cloud_material.set_shader_parameter("clear_radius", 1800.0 if level_id in [2, 5] else 0.0)
+		cloud_material.set_shader_parameter("clear_radius", lerp(2800.0, 4600.0, echo_moonlight) if level_id == 5 else (1800.0 if level_id == 2 else 0.0))
 		cloud_material.set_shader_parameter("cloud_focus", visual_position + visual_orientation * Vector3(0, 0, 600))
 		cloud_material.set_shader_parameter("quality", settings.values.cloud_quality)
 		cloud_material.set_shader_parameter("cloud_time", cloud_time)
+	if level_id == 5:
+		world_environment.ambient_light_energy = lerp(0.12, 0.44, echo_moonlight)
+		world_environment.background_energy_multiplier = lerp(0.52, 0.92, echo_moonlight)
+		sun_light.light_energy = lerp(0.13, 0.72, echo_moonlight)
+		if echo_moon_fill != null:
+			echo_moon_fill.light_energy = lerp(0.07, 0.36, echo_moonlight)
+		if echo_flash_light != null:
+			echo_flash_light.basis = Basis.looking_at(-echo_lightning_direction, Vector3.UP)
+			echo_flash_light.light_energy = echo_lightning * 8.0
+			echo_front_light.basis = Basis.looking_at((Vector3(model.forward.x, -0.55, model.forward.z)).normalized(), Vector3.UP)
+			echo_front_light.light_energy = echo_lightning * 5.0
+		if fallback_sky_material != null:
+			fallback_sky_material.sky_top_color = Color("050a17").lerp(Color("101a30"), echo_moonlight)
+			fallback_sky_material.sky_horizon_color = Color("080e1d").lerp(Color("27354f"), echo_moonlight).lerp(Color("637e9d"), echo_lightning * 0.65)
+			fallback_sky_material.ground_horizon_color = fallback_sky_material.sky_horizon_color
 	if sun_light != null:
-		sun_light.rotation_degrees.x = -float(settings.values.sun_elevation)
+		sun_light.rotation_degrees.x = -27.0 if level_id == 5 else -float(settings.values.sun_elevation)
 	if world_environment != null:
 		world_environment.fog_density = float(settings.values.fog_density)
 	hud.update_contrast(settings.values.hud_contrast)
@@ -1055,6 +1190,8 @@ func update_audio() -> void:
 
 
 func set_cockpit_mode(value: bool) -> void:
+	if level_id == 5 and not value and not observing and not echo_free_flight():
+		return
 	reset_free_look()
 	if value and (cockpit_eye_front == null or cockpit_eye_rear == null):
 		push_warning("Cockpit eye anchors are missing")
@@ -1072,7 +1209,9 @@ func set_cockpit_mode(value: bool) -> void:
 
 
 func switch_cockpit_seat() -> void:
-	if level_id == 1:
+	if level_id == 5 and not echo_free_flight():
+		return
+	if transport_aircraft:
 		match cockpit_seat:
 			"front": cockpit_seat = "rear"
 			"rear": cockpit_seat = "instructor"
@@ -1085,7 +1224,7 @@ func switch_cockpit_seat() -> void:
 func update_cockpit_camera(dt: float) -> void:
 	var anchor = cockpit_eye_front
 	var default_pitch = 5.77
-	if level_id == 1:
+	if transport_aircraft:
 		if cockpit_seat == "rear":
 			anchor = cockpit_eye_rear
 			default_pitch = 4.0
@@ -1103,6 +1242,14 @@ func update_cockpit_camera(dt: float) -> void:
 	var pitch_down = float(anchor.get_meta("pitch_down_degrees", default_pitch)) if anchor.has_meta("pitch_down_degrees") else default_pitch
 	var pitch = deg_to_rad(pitch_down)
 	var direction = (forward * cos(pitch) - plane_up * sin(pitch)).normalized()
+	if echo_free_flight():
+		if not free_look_active:
+			var recenter = 1.0 - exp(-dt * 5.0)
+			free_look_yaw = lerp(free_look_yaw, 0.0, recenter)
+			free_look_pitch = lerp(free_look_pitch, 0.0, recenter)
+		direction = Quaternion(plane_up, free_look_yaw) * direction
+		var head_right = direction.cross(plane_up).normalized()
+		direction = Quaternion(head_right, free_look_pitch) * direction
 	camera.global_position = anchor.global_position
 	camera.look_at(camera.global_position + direction * 100.0, plane_up)
 	camera.fov = lerp(camera.fov, 62.0, 1.0 - exp(-dt * 6.0))
@@ -1114,7 +1261,7 @@ func update_camera(dt: float) -> void:
 		return
 	var forward = (visual_orientation * Vector3(0, 0, 1)).normalized()
 	var plane_up = (visual_orientation * Vector3.UP).normalized()
-	var distance = float(settings.values.camera_distance) * (3.0 if level_id == 1 else 1.0) * (1.5 if wide_camera else 1.0)
+	var distance = float(settings.values.camera_distance) * (3.0 if transport_aircraft else 1.0) * (1.5 if wide_camera else 1.0)
 	var height = distance * 0.25
 	if not free_look_active:
 		var recenter_blend = 1.0 - exp(-dt * 8.0)
@@ -1131,7 +1278,7 @@ func update_camera(dt: float) -> void:
 		desired_offset = Quaternion(pitch_axis, free_look_pitch) * desired_offset
 	var desired_position = visual_position + desired_offset
 	desired_position.y = max(6.0, desired_position.y)
-	var normal_look = visual_position + forward * (0.0 if level_id == 1 else 28.0) + Vector3.UP * (5.0 if level_id == 1 else 2.0)
+	var normal_look = visual_position + forward * (0.0 if transport_aircraft else 28.0) + Vector3.UP * (5.0 if transport_aircraft else 2.0)
 	var orbit_look = visual_position + Vector3.UP * 1.2
 	var desired_look = normal_look.lerp(orbit_look, free_look_focus)
 	var follow = clamp(float(settings.values.camera_roll_follow), 0.0, 1.0)
@@ -1162,3 +1309,49 @@ func _exit_tree() -> void:
 	if is_instance_valid(wind_player):
 		wind_player.stop()
 		wind_player.stream = null
+
+
+func configure_echo_spawn() -> void:
+	echo_clearance = 0.0
+	echo_moonlight = 0.0
+	model.boundary_radius = 15000.0
+	model.gear_target_down = false
+	model.gear_extension = 0.0
+
+
+func begin_echo_reveal() -> void:
+	# The mission already uses this eye point. No Camera3D is replaced or cut.
+	cockpit_seat = "front"
+	set_cockpit_mode(true)
+	echo_lightning_direction = (-interception.route_right * 0.55 + Vector3.UP * 0.35 + interception.reveal_heading * 0.76).normalized()
+	reset_free_look()
+
+
+func update_echo_camera(dt: float) -> void:
+	# Establish the ordinary moving cockpit frame, then animate within that frame.
+	update_cockpit_camera(dt)
+	var normal_rotation: Quaternion = camera.quaternion
+	var normal_position: Vector3 = camera.global_position
+	var t = interception.stage_elapsed
+	var look_weight = smoothstep(0.0, 2.0, t) * (1.0 - smoothstep(11.0, 14.0, t))
+	var zoom_weight = smoothstep(2.0, 5.5, t) * (1.0 - smoothstep(7.0, 11.0, t))
+	var eyes: Vector3 = interception.monster.eyes_center()
+	var plane_up: Vector3 = visual_orientation * Vector3.UP
+	# Advance within the cockpit, past the combiner but 0.2m before the glass.
+	# This continuous move opens both eye sightlines without crossing the windscreen.
+	camera.global_position = normal_position + visual_orientation * Vector3(0.0, 0.0, 0.80) * look_weight
+	camera.look_at(eyes, plane_up)
+	var focused_rotation: Quaternion = camera.quaternion
+	camera.quaternion = normal_rotation.slerp(focused_rotation, look_weight)
+	var positions: Array[Vector3] = interception.monster.eye_positions()
+	if positions.size() == 2:
+		var pair_width = positions[0].distance_to(positions[1]) * 1.28
+		var distance = max(100.0, camera.global_position.distance_to(eyes))
+		var aspect = get_viewport().get_visible_rect().size.aspect()
+		echo_tele_fov = clamp(rad_to_deg(2.0 * atan(pair_width / (2.0 * distance * aspect * 0.66))), 18.0, 32.0)
+	var lens = lerp(tan(deg_to_rad(62.0) * 0.5), tan(deg_to_rad(echo_tele_fov) * 0.5), zoom_weight)
+	camera.fov = rad_to_deg(2.0 * atan(lens))
+
+
+func echo_free_flight() -> bool:
+	return level_id == 5 and interception != null and interception.stage == "free_flight"

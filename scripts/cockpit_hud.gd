@@ -9,11 +9,15 @@ const INSTRUMENT_FONT = preload("res://assets/fonts/VT323-Regular.ttf")
 var state = {}
 var combat = {}
 var combat_enabled = true
+var mission_title = ""
 var map_preview = false
 var ground_attack = false
 var paused = false
 var seat_name = "FRONT"
+var seat_locked = false
+var physical_instruments = false
 var redraw_elapsed = 0.0
+var encounter_weight = 0.0
 
 
 func _ready() -> void:
@@ -36,7 +40,23 @@ func set_seat(value: String) -> void:
 
 func set_paused(value: bool) -> void:
 	paused = value
+	update_encounter_alpha()
 	queue_redraw()
+
+
+func set_encounter_visibility(weight: float) -> void:
+	# This Control draws only the screen-space flight overlay. Physical MFDs,
+	# the mission/menu CanvasLayers and keyboard input remain independent.
+	var bounded_weight = clampf(weight, 0.0, 1.0)
+	if is_equal_approx(encounter_weight, bounded_weight):
+		return
+	encounter_weight = bounded_weight
+	update_encounter_alpha()
+	queue_redraw()
+
+
+func update_encounter_alpha() -> void:
+	self_modulate.a = 1.0 if paused else 1.0 - encounter_weight
 
 
 func _process(dt: float) -> void:
@@ -179,9 +199,15 @@ func draw_weapon_status() -> void:
 func _draw() -> void:
 	if state.is_empty():
 		return
+	if encounter_weight > 0.0 and paused:
+		var pause_origin = Vector2(size.x * 0.5 - 114.0, size.y * 0.12)
+		text(pause_origin, "PAUSED / P RESUME", 16, AMBER)
+		return
+	if encounter_weight >= 0.999:
+		return
 	var margin = max(24.0, size.x * 0.025)
 	var center = Vector2(size.x * 0.5, size.y * 0.42)
-	text(Vector2(margin, 30), "TARGETS %d/8" % int(combat.get("destroyed_targets", 0)) if ground_attack else ("KILLS %d" % int(combat.get("kills", 0)) if combat_enabled else ("ISLAND RECON / MAP PREVIEW" if map_preview else "AIRFIELD / RWY 36")), 11, MUTED)
+	text(Vector2(margin, 30), "TARGETS %d/8" % int(combat.get("destroyed_targets", 0)) if ground_attack else ("KILLS %d" % int(combat.get("kills", 0)) if combat_enabled else (mission_title if not mission_title.is_empty() else ("ISLAND RECON / MAP PREVIEW" if map_preview else "AIRFIELD / RWY 36"))), 11, MUTED)
 	if ground_attack:
 		text(Vector2(margin, 50), "DESTRUCTION %d%%" % int(round(float(combat.get("destruction", 0.0)) * 100.0)), 11, INK)
 		var message = str(combat.get("comms_text", ""))
@@ -190,7 +216,18 @@ func _draw() -> void:
 		if not message.is_empty():
 			text(Vector2(size.x * 0.5 - float(message.length()) * 4.0, 52), message, 13, AMBER)
 	text(Vector2(size.x - margin - 130, 30), "TIME " + format_time(state.get("time", 0.0)), 11, MUTED)
-	text(Vector2(size.x - margin - 218, 52), seat_name + " · 1 CHASE · 2 SEAT", 10, MUTED)
+	text(Vector2(size.x - margin - 218, 52), seat_name + (" / KC-390" if seat_locked else " · 1 CHASE · 2 SEAT"), 10, MUTED)
+
+	if physical_instruments:
+		# Flight symbols live on the real combiner. Keep only essential overlay
+		# warnings and menu/seat hints; no duplicate radar, tapes or boxes.
+		var notice = "IMPACT" if state.get("crashed", false) else ("STALL · NOSE DOWN" if state.get("stall", false) else "")
+		if paused:
+			notice = "PAUSED / P RESUME"
+		if not notice.is_empty():
+			var notice_width = 16 * notice.length() * 0.62
+			text(Vector2(size.x * 0.5 - notice_width * 0.5, size.y * 0.12), notice, 16, AMBER)
+		return
 
 	var heading = int(round(state.get("heading", 0.0))) % 360
 	var directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]

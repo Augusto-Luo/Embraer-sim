@@ -75,6 +75,10 @@ func _process(dt: float) -> void:
 		state.aircraftType = "KC-390"
 		if flight.takeoff != null:
 			state.training = flight.takeoff.training_snapshot()
+	elif flight.level_id == 5:
+		state.aircraftType = "KC-390"
+		if flight.interception != null:
+			state.echo_mission = flight.interception.interception_snapshot()
 	var combat = flight.cockpit_hud.combat
 	for item in viewports.values():
 		item.display.update_state(state)

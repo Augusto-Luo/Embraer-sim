@@ -247,7 +247,7 @@ func _build_header(parent: Node) -> void:
 	var title = _label("SETTINGS", 44, BRIGHT, true)
 	title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(title)
-	var missions = {1: "AIRFIELD", 2: "PURSUIT", 3: "FREE COMBAT", 4: "ISLAND STRIKE", 5: "INTERCEPT"}
+	var missions = {1: "AIRFIELD", 2: "PURSUIT", 3: "FREE COMBAT", 4: "ISLAND STRIKE", 5: "OPERAÇÃO ECO"}
 	var context = _label("MISSION %02d / %s\n%s" % [level_id, missions.get(level_id, "FREE FLIGHT"), "KC-390" if _transport() else "EMB-314"], 15, MUTED)
 	context.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	context.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -394,13 +394,16 @@ func _build_graphics(rows: Node) -> void:
 			{"label": "SIMPLIFIED", "value": false},
 		], "graphics")
 	if level_id != 4:
-		var low = 0.8 if level_id in [2, 5] else 0.2
-		var high = 0.4 if level_id == 1 else 0.85
+		var low = 0.65 if level_id == 5 else (0.8 if level_id == 2 else 0.2)
+		var high = 0.75 if level_id == 5 else (0.4 if level_id == 1 else 0.85)
 		add_slider(rows, "Cloud coverage", "cloud_coverage", low, high, 0.01, "", 1.0, "graphics")
 		if level_id in [1, 3]:
 			add_slider(rows, "Cloud top", "cloud_top", 2200.0, 6000.0, 100.0, "", 1.0, "graphics")
 		add_slider(rows, "Cloud quality", "cloud_quality", 0.0, 2.0, 1.0, "", 1.0, "graphics")
-	add_slider(rows, "Sun elevation", "sun_elevation", 10.0, 55.0, 1.0, "", 1.0, "graphics")
+	if level_id == 5:
+		add_section(rows, "MOONLIGHT / NIGHT FLIGHT")
+	else:
+		add_slider(rows, "Sun elevation", "sun_elevation", 10.0, 55.0, 1.0, "", 1.0, "graphics")
 	if level_id == 4:
 		add_section(rows, "ISLAND CLOUDS / FIXED")
 	elif level_id in [2, 5]:
@@ -413,6 +416,9 @@ func _build_audio(rows: Node) -> void:
 	gap.custom_minimum_size.y = 16
 	rows.add_child(gap)
 	add_section(rows, "SOUND CHECK")
+	if level_id == 5:
+		rows.add_child(_label("RADIO STATIC / AMBIENT CABIN AUDIO", 15, MUTED))
+		return
 	for id in ["cannon", "rocket", "explosion"]:
 		var row = HBoxContainer.new()
 		row.custom_minimum_size.y = 52
